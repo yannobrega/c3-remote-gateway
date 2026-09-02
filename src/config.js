@@ -74,6 +74,9 @@ export function loadConfig() {
     tokenTtlMs: integer("SESSION_TOKEN_TTL_SECONDS", 60, 15, 300) * 1000,
     sshConnectTimeoutMs:
       integer("SSH_CONNECT_TIMEOUT_SECONDS", 10, 3, 60) * 1000,
+    probeTimeoutMs: integer("PROBE_TIMEOUT_SECONDS", 3, 1, 15) * 1000,
+    probeConcurrency: integer("PROBE_CONCURRENCY", 20, 1, 100),
+    maxProbeTargets: integer("MAX_PROBE_TARGETS", 250, 1, 1000),
     sshSessionMaxMs:
       integer("SSH_SESSION_MAX_SECONDS", 7200, 60, 14400) * 1000,
     maxPendingSessions: integer("MAX_PENDING_SESSIONS", 100, 1, 1000),

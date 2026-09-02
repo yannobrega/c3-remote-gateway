@@ -19,6 +19,9 @@ const config = {
   }],
   tokenTtlMs: 60_000,
   sshConnectTimeoutMs: 10_000,
+  probeTimeoutMs: 1_000,
+  probeConcurrency: 5,
+  maxProbeTargets: 50,
   sshSessionMaxMs: 60_000,
   maxPendingSessions: 10,
   maxActiveSessions: 5,
@@ -61,6 +64,34 @@ test("health responde sem autenticação", async () => {
     const response = await fetch(`${baseUrl}/health`);
     assert.equal(response.status, 200);
     assert.equal((await response.json()).status, "ok");
+  });
+});
+
+test("verifica a disponibilidade TCP de MikroTiks autorizados", async () => {
+  await withServer(async (baseUrl) => {
+    const port = Number(new URL(baseUrl).port);
+    config.allowedCidrs.push(parseCidr("127.0.0.0/8"));
+    config.allowedPorts.add(port);
+    try {
+      const response = await fetch(`${baseUrl}/v1/probes`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${config.apiKey}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          targets: [{ id: "rb-local", host: "127.0.0.1", port }],
+        }),
+      });
+      assert.equal(response.status, 200);
+      const body = await response.json();
+      assert.equal(body.results[0].id, "rb-local");
+      assert.equal(body.results[0].online, true);
+      assert.ok(body.results[0].latencyMs >= 1);
+    } finally {
+      config.allowedCidrs.pop();
+      config.allowedPorts.delete(port);
+    }
   });
 });
 

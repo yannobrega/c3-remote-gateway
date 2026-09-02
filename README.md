@@ -31,6 +31,9 @@ ALLOWED_SSH_PORTS=22333
 SSH_TARGET_TRANSLATIONS=172.18.18.0/24=192.0.2.0/24,172.17.17.0/24=192.0.3.0/24
 SESSION_TOKEN_TTL_SECONDS=60
 SSH_CONNECT_TIMEOUT_SECONDS=10
+PROBE_TIMEOUT_SECONDS=3
+PROBE_CONCURRENCY=20
+MAX_PROBE_TARGETS=250
 SSH_SESSION_MAX_SECONDS=7200
 MAX_PENDING_SESSIONS=100
 MAX_ACTIVE_SESSIONS=20
@@ -51,6 +54,21 @@ painel. A VPS deve aplicar `NETMAP` da faixa virtual para a faixa SSTP real.
 ### `GET /health`
 
 Retorna a saúde do serviço e a quantidade de sessões pendentes/ativas.
+
+### `POST /v1/probes`
+
+Verifica em lote se a porta SSH de cada MikroTik está alcançável. O Gateway
+aplica a mesma lista de redes, portas permitidas e tradução de destino usada
+nas sessões SSH. A checagem TCP confirma não apenas que o IP responde, mas que
+o serviço usado pelo acesso remoto está disponível.
+
+```json
+{
+  "targets": [
+    { "id": "1", "host": "172.18.18.209", "port": 22333 }
+  ]
+}
+```
 
 ### `POST /v1/sessions`
 

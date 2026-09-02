@@ -1,4 +1,5 @@
 import http from "node:http";
+import net from "node:net";
 import { WebSocketServer } from "ws";
 import { SessionStore } from "./session-store.js";
 import {
@@ -12,6 +13,44 @@ import { openSshBridge } from "./ssh-bridge.js";
 
 const USERNAME_PATTERN = /^[a-zA-Z0-9._@-]{1,64}$/;
 const HOST_KEY_PATTERN = /^[a-fA-F0-9]{64}$/;
+
+export function probeTcp(host, port, timeoutMs) {
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    let settled = false;
+    const finish = (online, error = null) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve({
+        online,
+        latencyMs: online ? Math.max(1, Date.now() - startedAt) : null,
+        error,
+      });
+    };
+    const socket = net.createConnection({ host, port });
+    socket.setTimeout(timeoutMs);
+    socket.once("connect", () => finish(true));
+    socket.once("timeout", () => finish(false, "timeout"));
+    socket.once("error", (error) => finish(false, error.code ?? "unreachable"));
+  });
+}
+
+async function mapWithConcurrency(items, concurrency, mapper) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  async function worker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index], index);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, () => worker()),
+  );
+  return results;
+}
 
 function json(response, status, body, extraHeaders = {}) {
   const data = JSON.stringify(body);
@@ -111,6 +150,65 @@ export function createGatewayServer(config, options = {}) {
         pendingSessions: store.size,
         activeSessions: activeSessions.size,
       });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/v1/probes") {
+      const bearer = getBearerToken(request);
+      if (!bearer || !safeEqual(bearer, config.apiKey)) {
+        json(response, 401, { error: "Não autorizado." }, {
+          "www-authenticate": "Bearer",
+        });
+        return;
+      }
+
+      try {
+        const payload = await readJson(request, config.maxRequestBytes);
+        const targets = Array.isArray(payload?.targets) ? payload.targets : null;
+        if (!targets || targets.length === 0 || targets.length > config.maxProbeTargets) {
+          json(response, 400, { error: "Lista de MikroTiks inválida." });
+          return;
+        }
+
+        const validated = [];
+        for (const target of targets) {
+          const id = String(target?.id ?? "").trim();
+          const host = String(target?.host ?? "").trim();
+          const port = Number(target?.port ?? 22333);
+          const connectHost = translateIpv4(host, config.targetTranslations ?? []);
+          if (
+            !id ||
+            id.length > 128 ||
+            !isIpv4Allowed(host, config.allowedCidrs) ||
+            !config.allowedPorts.has(port) ||
+            !connectHost
+          ) {
+            json(response, 400, { error: "Alvo de verificação inválido." });
+            return;
+          }
+          validated.push({ id, host, connectHost, port });
+        }
+
+        const checkedAt = new Date().toISOString();
+        const results = await mapWithConcurrency(
+          validated,
+          config.probeConcurrency,
+          async (target) => ({
+            id: target.id,
+            ...(await probeTcp(target.connectHost, target.port, config.probeTimeoutMs)),
+          }),
+        );
+        json(response, 200, { checkedAt, results });
+      } catch (error) {
+        if (error instanceof SyntaxError) {
+          json(response, 400, { error: "JSON inválido." });
+        } else if (error.message === "BODY_TOO_LARGE") {
+          json(response, 413, { error: "Requisição muito grande." });
+        } else {
+          audit("probe.error", { message: error.message });
+          json(response, 500, { error: "Erro ao verificar MikroTiks." });
+        }
+      }
       return;
     }
 
