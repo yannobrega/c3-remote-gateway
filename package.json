@@ -1,0 +1,18 @@
+{
+  "name": "c3-remote-gateway",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Gateway WebSocket para acesso SSH seguro aos MikroTik do C3 Protect Remote",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "ssh2": "1.17.0",
+    "ws": "8.18.3"
+  }
+}
