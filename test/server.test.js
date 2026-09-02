@@ -19,6 +19,8 @@ const config = {
   }],
   tokenTtlMs: 60_000,
   sshConnectTimeoutMs: 10_000,
+  sshCommandTimeoutMs: 2_000,
+  sshCommandMaxOutputBytes: 256 * 1024,
   probeTimeoutMs: 1_000,
   probeConcurrency: 5,
   maxProbeTargets: 50,
@@ -54,6 +56,22 @@ class FakeSshClient extends EventEmitter {
     shell.stderr = new PassThrough();
     shell.setWindow = () => {};
     callback(null, shell);
+  }
+
+  exec(command, callback) {
+    this.command = command;
+    const stream = new PassThrough();
+    stream.stderr = new PassThrough();
+    callback(null, stream);
+    queueMicrotask(() => stream.end([
+      "===RESOURCE===",
+      "uptime: 4d2h1m",
+      "version: 7.21.1",
+      "cpu-load: 7%",
+      "board-name: RB5009UG+S+",
+      "===HEALTH===",
+      "cpu-temperature: 49C",
+    ].join("\n")));
   }
 
   end() {}
@@ -118,6 +136,64 @@ test("cria uma sessão protegida e não devolve a senha", async () => {
     assert.equal(body.websocketUrl, "wss://remote.c3protect.com.br/v1/terminal");
     assert.ok(body.token);
     assert.equal(JSON.stringify(body).includes("senha-unica"), false);
+  });
+});
+
+test("executa somente diagnóstico RouterOS permitido e não devolve a senha", async () => {
+  let sshClient;
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/v1/commands`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${config.apiKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        deviceId: "1",
+        deviceName: "RB-REVITA",
+        host: "172.18.18.209",
+        port: 22333,
+        username: "c3.remote",
+        password: "senha-unica",
+        actorEmail: "yan@c3support.com.br",
+        commandId: "system-overview",
+      }),
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.match(body.output, /RB5009/);
+    assert.match(sshClient.command, /system resource print/);
+    assert.equal(JSON.stringify(body).includes("senha-unica"), false);
+    assert.equal(sshClient.connectOptions.host, "192.0.2.209");
+  }, {
+    createSshClient: () => {
+      sshClient = new FakeSshClient();
+      return sshClient;
+    },
+  });
+});
+
+test("rejeita comandos arbitrários", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/v1/commands`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${config.apiKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        deviceId: "1",
+        deviceName: "RB-REVITA",
+        host: "172.18.18.209",
+        port: 22333,
+        username: "c3.remote",
+        password: "senha-unica",
+        actorEmail: "yan@c3support.com.br",
+        commandId: "/user print",
+      }),
+    });
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error, "Comando não autorizado.");
   });
 });
 

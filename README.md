@@ -11,6 +11,7 @@ em WebSocket para o terminal do navegador.
 - A senha SSH permanece somente na memória até o token ser consumido ou expirar.
 - O navegador recebe o token, mas nunca recebe usuário ou senha da RB.
 - Somente redes e portas configuradas podem ser acessadas.
+- Diagnósticos aceitam somente uma lista fixa de comandos RouterOS v7.
 - A origem do WebSocket é validada.
 - Logs de auditoria não incluem senha, chave da API ou token de sessão.
 
@@ -31,6 +32,8 @@ ALLOWED_SSH_PORTS=22333
 SSH_TARGET_TRANSLATIONS=172.18.18.0/24=192.0.2.0/24,172.17.17.0/24=192.0.3.0/24
 SESSION_TOKEN_TTL_SECONDS=60
 SSH_CONNECT_TIMEOUT_SECONDS=10
+SSH_COMMAND_TIMEOUT_SECONDS=12
+SSH_COMMAND_MAX_OUTPUT_BYTES=262144
 PROBE_TIMEOUT_SECONDS=3
 PROBE_CONCURRENCY=20
 MAX_PROBE_TARGETS=250
@@ -85,6 +88,24 @@ Chamado exclusivamente pelo backend do painel:
   "actorEmail": "operador@c3support.com.br",
   "cols": 120,
   "rows": 32
+}
+```
+
+### `POST /v1/commands`
+
+Executa um diagnóstico RouterOS v7 previamente autorizado. O Gateway nunca
+aceita texto de comando enviado pelo navegador.
+
+```json
+{
+  "deviceId": "1",
+  "deviceName": "RB-REVITA",
+  "host": "172.18.18.209",
+  "port": 22333,
+  "username": "c3.remote",
+  "password": "senha armazenada no painel",
+  "actorEmail": "operador@c3support.com.br",
+  "commandId": "system-overview"
 }
 ```
 

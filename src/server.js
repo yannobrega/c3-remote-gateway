@@ -10,6 +10,7 @@ import {
   translateIpv4,
 } from "./security.js";
 import { openSshBridge } from "./ssh-bridge.js";
+import { ROUTEROS_COMMANDS, runSshCommand } from "./ssh-command.js";
 
 const USERNAME_PATTERN = /^[a-zA-Z0-9._@-]{1,64}$/;
 const HOST_KEY_PATTERN = /^[a-fA-F0-9]{64}$/;
@@ -124,6 +125,51 @@ function validateSession(payload, config) {
   };
 }
 
+function validateCommand(payload, config) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return "Corpo da requisição inválido.";
+  }
+
+  const host = String(payload.host ?? "").trim();
+  const port = Number(payload.port ?? 22333);
+  const username = String(payload.username ?? "").trim();
+  const password = String(payload.password ?? "");
+  const actorEmail = String(payload.actorEmail ?? "").trim();
+  const deviceId = String(payload.deviceId ?? "").trim();
+  const deviceName = String(payload.deviceName ?? "").trim();
+  const commandId = String(payload.commandId ?? "").trim();
+  const hostKeySha256 = payload.hostKeySha256
+    ? String(payload.hostKeySha256).trim().toLowerCase()
+    : null;
+
+  if (!Object.hasOwn(ROUTEROS_COMMANDS, commandId)) return "Comando não autorizado.";
+  if (!isIpv4Allowed(host, config.allowedCidrs)) return "IP SSH não autorizado.";
+  if (!config.allowedPorts.has(port)) return "Porta SSH não autorizada.";
+  if (!USERNAME_PATTERN.test(username)) return "Usuário SSH inválido.";
+  if (!password || password.length > 256) return "Senha SSH inválida.";
+  if (!deviceId || deviceId.length > 128) return "Dispositivo inválido.";
+  if (!deviceName || deviceName.length > 128) return "Nome do dispositivo inválido.";
+  if (!actorEmail || actorEmail.length > 254) return "Operador inválido.";
+  if (hostKeySha256 && !HOST_KEY_PATTERN.test(hostKeySha256)) {
+    return "Fingerprint SSH inválida.";
+  }
+
+  const connectHost = translateIpv4(host, config.targetTranslations ?? []);
+  if (!connectHost) return "IP SSH inválido.";
+  return {
+    host,
+    connectHost,
+    port,
+    username,
+    password,
+    actorEmail,
+    deviceId,
+    deviceName,
+    commandId,
+    hostKeySha256,
+  };
+}
+
 export function createGatewayServer(config, options = {}) {
   const store = new SessionStore({
     ttlMs: config.tokenTtlMs,
@@ -207,6 +253,69 @@ export function createGatewayServer(config, options = {}) {
         } else {
           audit("probe.error", { message: error.message });
           json(response, 500, { error: "Erro ao verificar MikroTiks." });
+        }
+      }
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/v1/commands") {
+      const bearer = getBearerToken(request);
+      if (!bearer || !safeEqual(bearer, config.apiKey)) {
+        json(response, 401, { error: "Não autorizado." }, {
+          "www-authenticate": "Bearer",
+        });
+        return;
+      }
+
+      const startedAt = Date.now();
+      try {
+        const payload = await readJson(request, config.maxRequestBytes);
+        const validated = validateCommand(payload, config);
+        if (typeof validated === "string") {
+          json(response, 400, { error: validated });
+          return;
+        }
+
+        audit("command.started", {
+          commandId: validated.commandId,
+          deviceId: validated.deviceId,
+          deviceName: validated.deviceName,
+          actorEmail: validated.actorEmail,
+          host: validated.host,
+        });
+        const result = await runSshCommand({
+          target: validated,
+          commandId: validated.commandId,
+          config,
+          createClient: options.createSshClient,
+        });
+        const durationMs = Date.now() - startedAt;
+        audit("command.completed", {
+          commandId: validated.commandId,
+          deviceId: validated.deviceId,
+          actorEmail: validated.actorEmail,
+          durationMs,
+        });
+        json(response, 200, {
+          commandId: validated.commandId,
+          output: result.output,
+          exitCode: result.exitCode,
+          durationMs,
+        });
+      } catch (error) {
+        if (error instanceof SyntaxError) {
+          json(response, 400, { error: "JSON inválido." });
+        } else if (error.message === "BODY_TOO_LARGE") {
+          json(response, 413, { error: "Requisição muito grande." });
+        } else if (error.message === "SSH_AUTH_FAILED") {
+          json(response, 502, { error: "Credencial SSH rejeitada pelo MikroTik." });
+        } else if (error.message === "COMMAND_TIMEOUT") {
+          json(response, 504, { error: "O MikroTik demorou demais para responder." });
+        } else if (error.message === "COMMAND_OUTPUT_TOO_LARGE") {
+          json(response, 502, { error: "A saída do comando excedeu o limite seguro." });
+        } else {
+          audit("command.failed", { message: error.message });
+          json(response, 502, { error: "Não foi possível executar o diagnóstico SSH." });
         }
       }
       return;
