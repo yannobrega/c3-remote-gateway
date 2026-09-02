@@ -44,7 +44,7 @@ export function parseCidr(value) {
   }
 
   const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
-  return { network: ip & mask, mask };
+  return { network: ip & mask, mask, prefix };
 }
 
 export function isIpv4Allowed(address, cidrs) {
@@ -53,7 +53,26 @@ export function isIpv4Allowed(address, cidrs) {
   return cidrs.some(({ network, mask }) => (ip & mask) === network);
 }
 
+export function numberToIpv4(value) {
+  const number = value >>> 0;
+  return [24, 16, 8, 0]
+    .map((shift) => (number >>> shift) & 0xff)
+    .join(".");
+}
+
+export function translateIpv4(address, translations) {
+  const ip = ipv4ToNumber(address);
+  if (ip === null) return null;
+
+  for (const translation of translations) {
+    if ((ip & translation.source.mask) !== translation.source.network) continue;
+    const hostBits = ip & (~translation.source.mask >>> 0);
+    return numberToIpv4((translation.target.network | hostBits) >>> 0);
+  }
+
+  return address;
+}
+
 export function isOriginAllowed(origin, allowedOrigins) {
   return Boolean(origin && allowedOrigins.has(origin));
 }
-

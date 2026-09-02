@@ -13,6 +13,10 @@ const config = {
   allowedOrigins: new Set(["https://c3-protect-remote.yan-nobrega.chatgpt.site"]),
   allowedCidrs: [parseCidr("172.18.18.0/24")],
   allowedPorts: new Set([22333]),
+  targetTranslations: [{
+    source: parseCidr("172.18.18.0/24"),
+    target: parseCidr("192.0.2.0/24"),
+  }],
   tokenTtlMs: 60_000,
   sshConnectTimeoutMs: 10_000,
   sshSessionMaxMs: 60_000,
@@ -142,7 +146,7 @@ test("WebSocket consome o token e inicia a ponte SSH", async () => {
       socket.on("message", (raw) => {
         const message = JSON.parse(raw.toString("utf8"));
         if (message.type === "status" && message.status === "connected") {
-          assert.equal(sshClient.connectOptions.host, "172.18.18.209");
+          assert.equal(sshClient.connectOptions.host, "192.0.2.209");
           assert.equal(sshClient.connectOptions.port, 22333);
           assert.equal(sshClient.connectOptions.username, "c3.remote");
           assert.equal(sshClient.connectOptions.password, "senha-unica");

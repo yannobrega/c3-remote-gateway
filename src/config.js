@@ -16,6 +16,22 @@ function csv(name, fallback) {
     .filter(Boolean);
 }
 
+function targetTranslations() {
+  return csv("SSH_TARGET_TRANSLATIONS", "").map((value) => {
+    const parts = value.split("=").map((part) => part.trim());
+    if (parts.length !== 2 || !parts[0] || !parts[1]) {
+      throw new Error(`Tradução SSH inválida: ${value}`);
+    }
+
+    const source = parseCidr(parts[0]);
+    const target = parseCidr(parts[1]);
+    if (source.prefix !== target.prefix) {
+      throw new Error(`As redes da tradução devem ter o mesmo prefixo: ${value}`);
+    }
+    return { source, target };
+  });
+}
+
 export function loadConfig() {
   const apiKey = String(process.env.GATEWAY_API_KEY ?? "");
   if (apiKey.length < 32) {
@@ -54,6 +70,7 @@ export function loadConfig() {
     allowedOrigins,
     allowedCidrs,
     allowedPorts,
+    targetTranslations: targetTranslations(),
     tokenTtlMs: integer("SESSION_TOKEN_TTL_SECONDS", 60, 15, 300) * 1000,
     sshConnectTimeoutMs:
       integer("SSH_CONNECT_TIMEOUT_SECONDS", 10, 3, 60) * 1000,
@@ -65,4 +82,3 @@ export function loadConfig() {
     maxWebSocketMessageBytes: 64 * 1024,
   };
 }
-

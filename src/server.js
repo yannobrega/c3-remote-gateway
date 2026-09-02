@@ -6,6 +6,7 @@ import {
   isIpv4Allowed,
   isOriginAllowed,
   safeEqual,
+  translateIpv4,
 } from "./security.js";
 import { openSshBridge } from "./ssh-bridge.js";
 
@@ -66,8 +67,12 @@ function validateSession(payload, config) {
     return "Fingerprint SSH inválida.";
   }
 
+  const connectHost = translateIpv4(host, config.targetTranslations ?? []);
+  if (!connectHost) return "IP SSH inválido.";
+
   return {
     host,
+    connectHost,
     port,
     username,
     password,

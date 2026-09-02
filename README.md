@@ -28,6 +28,7 @@ GATEWAY_API_KEY=<chave aleatória com no mínimo 32 caracteres>
 ALLOWED_ORIGINS=https://c3-protect-remote.yan-nobrega.chatgpt.site
 ALLOWED_SSH_CIDRS=172.18.18.0/24,172.17.17.0/24
 ALLOWED_SSH_PORTS=22333
+SSH_TARGET_TRANSLATIONS=172.18.18.0/24=192.0.2.0/24,172.17.17.0/24=192.0.3.0/24
 SESSION_TOKEN_TTL_SECONDS=60
 SSH_CONNECT_TIMEOUT_SECONDS=10
 SSH_SESSION_MAX_SECONDS=7200
@@ -37,6 +38,13 @@ MAX_ACTIVE_SESSIONS=20
 
 O container não precisa executar o WireGuard. O host da VPS já possui a rota e
 o Docker utilizará o encaminhamento do próprio host para alcançar as redes SSTP.
+
+### Tradução para redes sobrepostas
+
+O `docker_gwbridge` do EasyPanel pode utilizar `172.18.0.0/16`, sobrepondo a
+rede SSTP. `SSH_TARGET_TRANSLATIONS` converte somente o destino da conexão do
+Gateway para uma faixa virtual. O IP real continua armazenado e exibido no
+painel. A VPS deve aplicar `NETMAP` da faixa virtual para a faixa SSTP real.
 
 ## API
 

@@ -118,7 +118,7 @@ export function openSshBridge({
   client.once("close", () => close(1000, "SSH encerrado"));
 
   const connectOptions = {
-    host: session.host,
+    host: session.connectHost ?? session.host,
     port: session.port,
     username: session.username,
     password: session.password,

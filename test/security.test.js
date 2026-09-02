@@ -5,6 +5,7 @@ import {
   issueToken,
   parseCidr,
   safeEqual,
+  translateIpv4,
 } from "../src/security.js";
 
 test("valida IPv4 dentro das redes permitidas", () => {
@@ -15,6 +16,15 @@ test("valida IPv4 dentro das redes permitidas", () => {
   assert.equal(isIpv4Allowed("172.18.18.999", cidrs), false);
 });
 
+test("traduz o IP real para a rede virtual preservando o host", () => {
+  const translations = [{
+    source: parseCidr("172.18.18.0/24"),
+    target: parseCidr("192.0.2.0/24"),
+  }];
+  assert.equal(translateIpv4("172.18.18.209", translations), "192.0.2.209");
+  assert.equal(translateIpv4("172.17.17.10", translations), "172.17.17.10");
+});
+
 test("token possui entropia e comparação constante funciona", () => {
   const first = issueToken();
   const second = issueToken();
@@ -23,4 +33,3 @@ test("token possui entropia e comparação constante funciona", () => {
   assert.equal(safeEqual("segredo", "segredo"), true);
   assert.equal(safeEqual("segredo", "outro"), false);
 });
-
