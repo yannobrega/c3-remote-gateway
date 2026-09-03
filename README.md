@@ -108,6 +108,12 @@ Chamado exclusivamente pelo backend do painel:
 Executa um diagnóstico RouterOS v7 previamente autorizado. O Gateway nunca
 aceita texto de comando enviado pelo navegador.
 
+Comandos disponíveis na versão 1.5.0: visão geral, teste de internet, ping,
+traceroute, DNS, interfaces, endereços IP, rotas, clientes DHCP, sessões PPP,
+vizinhos, conexões, firewall, logs, estado SSTP, execução do `backup_ftp` e
+reinício controlado da interface `sstp-c3support`. As duas últimas ações são
+assíncronas e exigem confirmação no painel.
+
 ```json
 {
   "deviceId": "1",

@@ -3,15 +3,22 @@ import { Client as SshClient } from "ssh2";
 export const ROUTEROS_COMMANDS = Object.freeze({
   "system-overview":
     ':put "===RESOURCE==="; /system resource print without-paging; :put "===HEALTH==="; /system health print without-paging',
-  interfaces: "/interface print detail without-paging",
+  ping: '/ping address=1.1.1.1 count=5 interval=500ms',
+  traceroute: '/tool traceroute address=1.1.1.1 count=1 max-hops=15 timeout=1s use-dns=no',
+  dns: ':put "===DNS_SETTINGS==="; /ip dns print without-paging; :put "===DNS_TEST==="; :do {:local resolved [:resolve "brasil.c3support.com.br"]; :put ("status=ok domain=brasil.c3support.com.br address=" . $resolved)} on-error={:put "status=error domain=brasil.c3support.com.br"}',
+  interfaces: "/interface print terse without-paging",
   "ip-addresses": "/ip address print detail without-paging",
-  routes: "/ip route print detail without-paging",
-  "dhcp-leases": "/ip dhcp-server lease print detail without-paging",
+  routes: "/ip route print terse without-paging where active",
+  "dhcp-leases": "/ip dhcp-server lease print terse without-paging",
   neighbors: "/ip neighbor print detail without-paging",
   firewall: "/ip firewall filter print stats without-paging",
   sstp: "/interface sstp-client print detail without-paging",
-  logs: '/log print without-paging where topics~"critical|error|warning"',
-  connections: "/ip firewall connection print count-only",
+  logs: '/log print terse without-paging where topics~"critical|error|warning"',
+  connections: ':put ("count=" . [/ip firewall connection print count-only])',
+  "ppp-sessions": "/ppp active print terse without-paging",
+  "internet-test": ':put "===IP_TEST==="; /ping address=1.1.1.1 count=4 interval=500ms; :put "===DNS_TEST==="; :do {:local resolved [:resolve "google.com"]; :put ("status=ok domain=google.com address=" . $resolved)} on-error={:put "status=error domain=google.com"}',
+  "run-backup": ':if ([:len [/system script find where name="backup_ftp"]] = 0) do={:error "Script backup_ftp nao encontrado"}; :execute {/system script run backup_ftp}; :put "status=started job=backup_ftp"',
+  "restart-sstp": ':if ([:len [/interface sstp-client find where name="sstp-c3support"]] = 0) do={:error "Interface sstp-c3support nao encontrada"}; :execute {/interface sstp-client disable [find where name="sstp-c3support"]; :delay 3s; /interface sstp-client enable [find where name="sstp-c3support"]}; :put "status=started interface=sstp-c3support"',
 });
 
 export function runSshCommand({
