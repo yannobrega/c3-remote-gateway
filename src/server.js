@@ -11,6 +11,12 @@ import {
 } from "./security.js";
 import { openSshBridge } from "./ssh-bridge.js";
 import { ROUTEROS_COMMANDS, runSshCommand } from "./ssh-command.js";
+import { WebfigSessionStore } from "./webfig-store.js";
+import {
+  handleWebfigRequest,
+  handleWebfigUpgrade,
+  isWebfigRequest,
+} from "./webfig-proxy.js";
 
 const USERNAME_PATTERN = /^[a-zA-Z0-9._@-]{1,64}$/;
 const HOST_KEY_PATTERN = /^[a-fA-F0-9]{64}$/;
@@ -170,12 +176,53 @@ function validateCommand(payload, config) {
   };
 }
 
+function validateWebfigSession(payload, config) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return "Corpo da requisição inválido.";
+  }
+
+  const host = String(payload.host ?? "").trim();
+  const port = Number(payload.port ?? 1080);
+  const username = String(payload.username ?? "").trim();
+  const password = String(payload.password ?? "");
+  const actorEmail = String(payload.actorEmail ?? "").trim();
+  const deviceId = String(payload.deviceId ?? "").trim();
+  const deviceName = String(payload.deviceName ?? "").trim();
+
+  if (!isIpv4Allowed(host, config.allowedCidrs)) return "IP WebFig não autorizado.";
+  if (!config.allowedWebfigPorts.has(port)) return "Porta WebFig não autorizada.";
+  if (!USERNAME_PATTERN.test(username)) return "Usuário WebFig inválido.";
+  if (!password || password.length > 256) return "Senha WebFig inválida.";
+  if (!deviceId || deviceId.length > 128) return "Dispositivo inválido.";
+  if (!deviceName || deviceName.length > 128) return "Nome do dispositivo inválido.";
+  if (!actorEmail || actorEmail.length > 254) return "Operador inválido.";
+
+  const connectHost = translateIpv4(host, config.targetTranslations ?? []);
+  if (!connectHost) return "IP WebFig inválido.";
+  return {
+    host,
+    connectHost,
+    port,
+    username,
+    password,
+    actorEmail,
+    deviceId,
+    deviceName,
+  };
+}
+
 export function createGatewayServer(config, options = {}) {
   const store = new SessionStore({
     ttlMs: config.tokenTtlMs,
     maxPending: config.maxPendingSessions,
   });
   const activeSessions = new Map();
+  const webfigSessions = new WebfigSessionStore({
+    tokenTtlMs: config.tokenTtlMs,
+    sessionTtlMs: config.webfigSessionTtlMs,
+    maxPending: config.maxPendingWebfigSessions,
+    maxActive: config.maxActiveWebfigSessions,
+  });
   const wss = new WebSocketServer({
     noServer: true,
     maxPayload: config.maxWebSocketMessageBytes,
@@ -190,11 +237,18 @@ export function createGatewayServer(config, options = {}) {
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://gateway.local");
 
+    if (isWebfigRequest(request, config)) {
+      handleWebfigRequest({ request, response, config, store: webfigSessions, audit });
+      return;
+    }
+
     if (request.method === "GET" && url.pathname === "/health") {
       json(response, 200, {
         status: "ok",
         pendingSessions: store.size,
         activeSessions: activeSessions.size,
+        pendingWebfigSessions: webfigSessions.pendingSize,
+        activeWebfigSessions: webfigSessions.activeSize,
       });
       return;
     }
@@ -368,10 +422,67 @@ export function createGatewayServer(config, options = {}) {
       return;
     }
 
+    if (request.method === "POST" && url.pathname === "/v1/webfig-sessions") {
+      const bearer = getBearerToken(request);
+      if (!bearer || !safeEqual(bearer, config.apiKey)) {
+        json(response, 401, { error: "Não autorizado." }, {
+          "www-authenticate": "Bearer",
+        });
+        return;
+      }
+
+      try {
+        const payload = await readJson(request, config.maxRequestBytes);
+        const validated = validateWebfigSession(payload, config);
+        if (typeof validated === "string") {
+          json(response, 400, { error: validated });
+          return;
+        }
+        const created = webfigSessions.create(validated);
+        audit("webfig.session_created", {
+          sessionId: created.sessionId,
+          deviceId: validated.deviceId,
+          deviceName: validated.deviceName,
+          actorEmail: validated.actorEmail,
+          host: validated.host,
+          port: validated.port,
+        });
+        json(response, 201, {
+          sessionId: created.sessionId,
+          url: `${config.webfigPublicBaseUrl}/open/${created.token}`,
+          expiresAt: new Date(created.expiresAt).toISOString(),
+        });
+      } catch (error) {
+        if (error instanceof SyntaxError) {
+          json(response, 400, { error: "JSON inválido." });
+        } else if (error.message === "BODY_TOO_LARGE") {
+          json(response, 413, { error: "Requisição muito grande." });
+        } else if (error.message === "MAX_PENDING_SESSIONS") {
+          json(response, 503, { error: "Limite de sessões WebFig pendentes atingido." });
+        } else {
+          audit("webfig.api_error", { message: error.message });
+          json(response, 500, { error: "Erro interno." });
+        }
+      }
+      return;
+    }
+
     json(response, 404, { error: "Rota não encontrada." });
   });
 
   server.on("upgrade", (request, socket, head) => {
+    if (isWebfigRequest(request, config)) {
+      handleWebfigUpgrade({
+        request,
+        socket,
+        head,
+        config,
+        store: webfigSessions,
+        audit,
+      });
+      return;
+    }
+
     const url = new URL(request.url ?? "/", "http://gateway.local");
     const origin = request.headers.origin;
     if (
@@ -400,6 +511,9 @@ export function createGatewayServer(config, options = {}) {
       socket.destroy();
       return;
     }
+
+    socket.setKeepAlive(true, 30_000);
+    socket.setNoDelay(true);
 
     wss.handleUpgrade(request, socket, head, (ws) => {
       const auditSession = (event, extra = {}) => audit(event, {
@@ -431,7 +545,10 @@ export function createGatewayServer(config, options = {}) {
     });
   });
 
-  const sweepTimer = setInterval(() => store.sweep(), Math.min(config.tokenTtlMs, 30_000));
+  const sweepTimer = setInterval(() => {
+    store.sweep();
+    webfigSessions.sweep();
+  }, Math.min(config.tokenTtlMs, 30_000));
   sweepTimer.unref();
 
   async function close() {
@@ -440,9 +557,10 @@ export function createGatewayServer(config, options = {}) {
       closeBridge(1001, "Gateway reiniciando");
     }
     store.clear();
+    webfigSessions.clear();
     await new Promise((resolve) => server.close(resolve));
     wss.close();
   }
 
-  return { server, close, store, activeSessions };
+  return { server, close, store, activeSessions, webfigSessions };
 }

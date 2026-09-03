@@ -1,8 +1,8 @@
 # C3 Remote Gateway
 
 Serviço intermediário do C3 Protect Remote. Recebe do backend do painel uma
-solicitação autenticada, cria um token descartável e transforma uma sessão SSH
-em WebSocket para o terminal do navegador.
+solicitação autenticada, cria tokens descartáveis e publica sessões SSH e
+WebFig sem expor as credenciais dos MikroTiks ao navegador.
 
 ## Segurança
 
@@ -13,22 +13,28 @@ em WebSocket para o terminal do navegador.
 - Somente redes e portas configuradas podem ser acessadas.
 - Diagnósticos aceitam somente uma lista fixa de comandos RouterOS v7.
 - A origem do WebSocket é validada.
+- O WebFig utiliza uma sessão HTTP segura, curta e vinculada a cookie HttpOnly.
+- O proxy injeta a credencial somente no salto privado até o RouterOS.
 - Logs de auditoria não incluem senha, chave da API ou token de sessão.
 
 ## EasyPanel
 
 Crie uma aplicação apontando para este projeto e utilize o `Dockerfile` da raiz.
-Configure o domínio `remote.c3protect.com.br`, porta interna `3000` e HTTPS.
+Configure os domínios `remote.c3protect.com.br` e `webfig.c3protect.com.br`,
+ambos apontando para a porta interna `3000` com HTTPS.
 
 Variáveis obrigatórias:
 
 ```env
 PORT=3000
 PUBLIC_BASE_URL=https://remote.c3protect.com.br
+WEBFIG_PUBLIC_BASE_URL=https://webfig.c3protect.com.br
+WEBFIG_RETURN_URL=https://c3-protect-remote.yan-nobrega.chatgpt.site
 GATEWAY_API_KEY=<chave aleatória com no mínimo 32 caracteres>
 ALLOWED_ORIGINS=https://c3-protect-remote.yan-nobrega.chatgpt.site
 ALLOWED_SSH_CIDRS=172.18.18.0/24,172.17.17.0/24
 ALLOWED_SSH_PORTS=22333
+ALLOWED_WEBFIG_PORTS=1080
 SSH_TARGET_TRANSLATIONS=172.18.18.0/24=192.0.2.0/24,172.17.17.0/24=192.0.3.0/24
 SESSION_TOKEN_TTL_SECONDS=60
 SSH_CONNECT_TIMEOUT_SECONDS=10
@@ -38,8 +44,13 @@ PROBE_TIMEOUT_SECONDS=3
 PROBE_CONCURRENCY=20
 MAX_PROBE_TARGETS=250
 SSH_SESSION_MAX_SECONDS=7200
+WEBSOCKET_HEARTBEAT_SECONDS=20
+WEBFIG_SESSION_TTL_MINUTES=30
+WEBFIG_UPSTREAM_TIMEOUT_SECONDS=30
 MAX_PENDING_SESSIONS=100
 MAX_ACTIVE_SESSIONS=20
+MAX_PENDING_WEBFIG_SESSIONS=100
+MAX_ACTIVE_WEBFIG_SESSIONS=20
 ```
 
 O container não precisa executar o WireGuard. O host da VPS já possui a rota e
@@ -106,6 +117,23 @@ aceita texto de comando enviado pelo navegador.
   "password": "senha armazenada no painel",
   "actorEmail": "operador@c3support.com.br",
   "commandId": "system-overview"
+}
+```
+
+### `POST /v1/webfig-sessions`
+
+Cria um link WebFig descartável. Ao abrir o link, o Gateway grava uma sessão
+HttpOnly temporária e passa a encaminhar a interface da RB pela porta permitida.
+
+```json
+{
+  "deviceId": "1",
+  "deviceName": "RB-LCA_ETIQUETAS",
+  "host": "172.18.18.214",
+  "port": 1080,
+  "username": "c3.remote",
+  "password": "senha armazenada no painel",
+  "actorEmail": "operador@c3support.com.br"
 }
 ```
 

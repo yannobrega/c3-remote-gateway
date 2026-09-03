@@ -32,6 +32,16 @@ function targetTranslations() {
   });
 }
 
+function ports(name, fallback) {
+  return new Set(csv(name, fallback).map((value) => {
+    const port = Number(value);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error(`Porta inválida em ${name}: ${value}`);
+    }
+    return port;
+  }));
+}
+
 export function loadConfig() {
   const apiKey = String(process.env.GATEWAY_API_KEY ?? "");
   if (apiKey.length < 32) {
@@ -53,15 +63,21 @@ export function loadConfig() {
     "172.18.18.0/24,172.17.17.0/24",
   ).map(parseCidr);
 
-  const allowedPorts = new Set(
-    csv("ALLOWED_SSH_PORTS", "22333").map((value) => {
-      const port = Number(value);
-      if (!Number.isInteger(port) || port < 1 || port > 65535) {
-        throw new Error(`Porta SSH inválida: ${value}`);
-      }
-      return port;
-    }),
+  const allowedPorts = ports("ALLOWED_SSH_PORTS", "22333");
+
+  const webfigPublicBaseUrl = String(
+    process.env.WEBFIG_PUBLIC_BASE_URL ?? "https://webfig.c3protect.com.br",
+  ).replace(/\/$/, "");
+  if (!/^https:\/\/[^/]+$/.test(webfigPublicBaseUrl)) {
+    throw new Error("WEBFIG_PUBLIC_BASE_URL deve ser uma origem HTTPS válida");
+  }
+
+  const webfigReturnUrl = String(
+    process.env.WEBFIG_RETURN_URL ?? [...allowedOrigins][0],
   );
+  if (!/^https:\/\//.test(webfigReturnUrl)) {
+    throw new Error("WEBFIG_RETURN_URL deve usar HTTPS");
+  }
 
   return {
     port: integer("PORT", 3000, 1, 65535),
@@ -70,7 +86,10 @@ export function loadConfig() {
     allowedOrigins,
     allowedCidrs,
     allowedPorts,
+    allowedWebfigPorts: ports("ALLOWED_WEBFIG_PORTS", "1080"),
     targetTranslations: targetTranslations(),
+    webfigPublicBaseUrl,
+    webfigReturnUrl,
     tokenTtlMs: integer("SESSION_TOKEN_TTL_SECONDS", 60, 15, 300) * 1000,
     sshConnectTimeoutMs:
       integer("SSH_CONNECT_TIMEOUT_SECONDS", 10, 3, 60) * 1000,
@@ -83,6 +102,16 @@ export function loadConfig() {
     maxProbeTargets: integer("MAX_PROBE_TARGETS", 250, 1, 1000),
     sshSessionMaxMs:
       integer("SSH_SESSION_MAX_SECONDS", 7200, 60, 14400) * 1000,
+    webSocketHeartbeatMs:
+      integer("WEBSOCKET_HEARTBEAT_SECONDS", 20, 10, 60) * 1000,
+    webfigSessionTtlMs:
+      integer("WEBFIG_SESSION_TTL_MINUTES", 30, 5, 120) * 60 * 1000,
+    webfigUpstreamTimeoutMs:
+      integer("WEBFIG_UPSTREAM_TIMEOUT_SECONDS", 30, 5, 120) * 1000,
+    maxPendingWebfigSessions:
+      integer("MAX_PENDING_WEBFIG_SESSIONS", 100, 1, 1000),
+    maxActiveWebfigSessions:
+      integer("MAX_ACTIVE_WEBFIG_SESSIONS", 20, 1, 200),
     maxPendingSessions: integer("MAX_PENDING_SESSIONS", 100, 1, 1000),
     maxActiveSessions: integer("MAX_ACTIVE_SESSIONS", 20, 1, 200),
     maxRequestBytes: 16 * 1024,

@@ -102,8 +102,6 @@ export function runSshCommand({
       username: target.username,
       password: target.password,
       readyTimeout: config.sshConnectTimeoutMs,
-      keepaliveInterval: 10_000,
-      keepaliveCountMax: 2,
     };
     if (target.hostKeySha256) {
       connectOptions.hostHash = "sha256";

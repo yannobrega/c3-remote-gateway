@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import http from "node:http";
 import { PassThrough } from "node:stream";
 import WebSocket from "ws";
 import { createGatewayServer } from "../src/server.js";
@@ -13,6 +14,7 @@ const config = {
   allowedOrigins: new Set(["https://c3-protect-remote.yan-nobrega.chatgpt.site"]),
   allowedCidrs: [parseCidr("172.18.18.0/24")],
   allowedPorts: new Set([22333]),
+  allowedWebfigPorts: new Set([1080]),
   targetTranslations: [{
     source: parseCidr("172.18.18.0/24"),
     target: parseCidr("192.0.2.0/24"),
@@ -25,6 +27,13 @@ const config = {
   probeConcurrency: 5,
   maxProbeTargets: 50,
   sshSessionMaxMs: 60_000,
+  webSocketHeartbeatMs: 20_000,
+  webfigPublicBaseUrl: "https://webfig.c3protect.com.br",
+  webfigReturnUrl: "https://c3-protect-remote.yan-nobrega.chatgpt.site",
+  webfigSessionTtlMs: 30 * 60_000,
+  webfigUpstreamTimeoutMs: 5_000,
+  maxPendingWebfigSessions: 10,
+  maxActiveWebfigSessions: 5,
   maxPendingSessions: 10,
   maxActiveSessions: 5,
   maxRequestBytes: 16 * 1024,
@@ -43,6 +52,21 @@ async function withServer(callback, options = {}) {
   } finally {
     await gateway.close();
   }
+}
+
+function rawRequest(url, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const request = http.get(url, { headers }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.once("end", () => resolve({
+        status: response.statusCode,
+        headers: response.headers,
+        body: Buffer.concat(chunks).toString("utf8"),
+      }));
+    });
+    request.once("error", reject);
+  });
 }
 
 class FakeSshClient extends EventEmitter {
@@ -223,6 +247,65 @@ test("bloqueia API sem chave e IP fora das redes", async () => {
   });
 });
 
+test("cria sessão WebFig temporária e injeta a credencial somente no proxy", async () => {
+  let receivedAuthorization = "";
+  const upstream = http.createServer((request, response) => {
+    receivedAuthorization = String(request.headers.authorization ?? "");
+    response.writeHead(200, { "content-type": "text/plain" });
+    response.end("WEBFIG_OK");
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  const upstreamPort = upstream.address().port;
+  config.allowedCidrs.push(parseCidr("127.0.0.0/8"));
+  config.allowedWebfigPorts.add(upstreamPort);
+
+  try {
+    await withServer(async (baseUrl) => {
+      const createdResponse = await fetch(`${baseUrl}/v1/webfig-sessions`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${config.apiKey}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          deviceId: "1",
+          deviceName: "RB-WEBFIG",
+          host: "127.0.0.1",
+          port: upstreamPort,
+          username: "c3.remote",
+          password: "senha-unica",
+          actorEmail: "yan@c3support.com.br",
+        }),
+      });
+      assert.equal(createdResponse.status, 201);
+      const created = await createdResponse.json();
+      assert.equal(JSON.stringify(created).includes("senha-unica"), false);
+
+      const openResponse = await rawRequest(
+        `${baseUrl}${new URL(created.url).pathname}`,
+        { host: "webfig.c3protect.com.br" },
+      );
+      assert.equal(openResponse.status, 302);
+      const cookie = openResponse.headers["set-cookie"][0].split(";")[0];
+
+      const proxyResponse = await rawRequest(`${baseUrl}/`, {
+          host: "webfig.c3protect.com.br",
+          cookie,
+      });
+      assert.equal(proxyResponse.status, 200);
+      assert.equal(proxyResponse.body, "WEBFIG_OK");
+      assert.equal(
+        receivedAuthorization,
+        `Basic ${Buffer.from("c3.remote:senha-unica").toString("base64")}`,
+      );
+    });
+  } finally {
+    config.allowedCidrs.pop();
+    config.allowedWebfigPorts.delete(upstreamPort);
+    await new Promise((resolve) => upstream.close(resolve));
+  }
+});
+
 test("WebSocket consome o token e inicia a ponte SSH", async () => {
   let sshClient;
   await withServer(async (baseUrl) => {
@@ -257,6 +340,9 @@ test("WebSocket consome o token e inicia a ponte SSH", async () => {
           assert.equal(sshClient.connectOptions.port, 22333);
           assert.equal(sshClient.connectOptions.username, "c3.remote");
           assert.equal(sshClient.connectOptions.password, "senha-unica");
+          assert.equal(sshClient.connectOptions.keepaliveInterval, undefined);
+          socket.send(JSON.stringify({ type: "heartbeat" }));
+        } else if (message.type === "heartbeat") {
           socket.close();
           resolve();
         }

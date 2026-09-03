@@ -15,11 +15,14 @@ export function openSshBridge({
   const client = createClient();
   let stream = null;
   let closed = false;
+  let sshConnected = false;
+  let lastSshError = null;
 
   const close = (code = 1000, reason = "Sessão encerrada") => {
     if (closed) return;
     closed = true;
     clearTimeout(maxDurationTimer);
+    clearInterval(heartbeatTimer);
     try {
       stream?.end();
       client.end();
@@ -39,6 +42,13 @@ export function openSshBridge({
   }, config.sshSessionMaxMs);
   maxDurationTimer.unref();
 
+  // Mantém o WebSocket ativo através de proxies/CDNs sem depender do keepalive
+  // SSH, que não é respondido de forma consistente por todas as versões RouterOS.
+  const heartbeatTimer = setInterval(() => {
+    if (ws.readyState === 1) ws.ping();
+  }, config.webSocketHeartbeatMs);
+  heartbeatTimer.unref();
+
   ws.on("message", (raw) => {
     if (raw.length > config.maxWebSocketMessageBytes) {
       close(1009, "Mensagem muito grande");
@@ -49,6 +59,8 @@ export function openSshBridge({
       const message = JSON.parse(raw.toString("utf8"));
       if (message.type === "input" && typeof message.data === "string") {
         stream?.write(message.data);
+      } else if (message.type === "heartbeat") {
+        send(ws, { type: "heartbeat", timestamp: Date.now() });
       } else if (
         message.type === "resize" &&
         Number.isInteger(message.cols) &&
@@ -65,13 +77,18 @@ export function openSshBridge({
     }
   });
 
-  ws.once("close", () => {
-    audit("session.closed", { reason: "browser" });
+  ws.once("close", (code, reason) => {
+    audit("session.closed", {
+      reason: "browser",
+      code,
+      message: reason?.toString("utf8") || null,
+    });
     close();
   });
   ws.once("error", () => close(1011, "Erro no WebSocket"));
 
   client.on("ready", () => {
+    sshConnected = true;
     audit("ssh.connected");
     client.shell(
       {
@@ -105,17 +122,37 @@ export function openSshBridge({
   });
 
   client.once("error", (error) => {
+    lastSshError = {
+      level: error.level ?? "unknown",
+      code: error.code ?? "unknown",
+      message: error.message ?? "unknown",
+    };
+    const isTimeout = error.level === "client-timeout" || error.code === "ETIMEDOUT";
+    const isReset = error.code === "ECONNRESET" || error.code === "EPIPE";
     send(ws, {
       type: "error",
       message: error.level === "client-authentication"
         ? "Credencial SSH rejeitada pelo MikroTik."
-        : "Não foi possível conectar ao MikroTik.",
+        : isTimeout
+          ? "O MikroTik parou de responder durante a sessão."
+          : isReset
+            ? "A conexão com o MikroTik foi interrompida pela rede."
+            : sshConnected
+              ? "A sessão SSH foi interrompida inesperadamente."
+              : "Não foi possível conectar ao MikroTik.",
     });
-    audit("ssh.failed", { level: error.level ?? "unknown" });
+    audit("ssh.failed", lastSshError);
     close(1011, "Falha na conexão SSH");
   });
 
-  client.once("close", () => close(1000, "SSH encerrado"));
+  client.once("close", (hadError) => {
+    audit("ssh.transport_closed", {
+      connected: sshConnected,
+      hadError: Boolean(hadError),
+      lastError: lastSshError,
+    });
+    close(hadError ? 1011 : 1000, hadError ? "Transporte SSH interrompido" : "SSH encerrado");
+  });
 
   const connectOptions = {
     host: session.connectHost ?? session.host,
@@ -123,8 +160,6 @@ export function openSshBridge({
     username: session.username,
     password: session.password,
     readyTimeout: config.sshConnectTimeoutMs,
-    keepaliveInterval: 10_000,
-    keepaliveCountMax: 3,
   };
 
   if (session.hostKeySha256) {
