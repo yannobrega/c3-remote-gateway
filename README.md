@@ -14,7 +14,8 @@ WebFig sem expor as credenciais dos MikroTiks ao navegador.
 - Diagnósticos aceitam somente uma lista fixa de comandos RouterOS v7.
 - A origem do WebSocket é validada.
 - O WebFig utiliza uma sessão HTTP segura, curta e vinculada a cookie HttpOnly.
-- O proxy injeta a credencial somente no salto privado até o RouterOS.
+- O proxy preserva o fluxo de autenticação criptografado nativo do WebFig.
+- As respostas do WebFig não são armazenadas em cache, evitando misturar arquivos de versões diferentes do RouterOS.
 - Logs de auditoria não incluem senha, chave da API ou token de sessão.
 
 ## EasyPanel
@@ -124,6 +125,7 @@ aceita texto de comando enviado pelo navegador.
 
 Cria um link WebFig descartável. Ao abrir o link, o Gateway grava uma sessão
 HttpOnly temporária e passa a encaminhar a interface da RB pela porta permitida.
+O operador autentica na tela nativa do RouterOS com o usuário `c3.remote`.
 
 ```json
 {
