@@ -286,7 +286,6 @@ test("cria sessão WebFig temporária sem interferir no login nativo do RouterOS
         { host: "webfig.c3protect.com.br" },
       );
       assert.equal(openResponse.status, 302);
-      assert.equal(openResponse.headers["clear-site-data"], '"cache", "storage"');
       const cookie = openResponse.headers["set-cookie"][0].split(";")[0];
 
       const proxyResponse = await rawRequest(`${baseUrl}/`, {

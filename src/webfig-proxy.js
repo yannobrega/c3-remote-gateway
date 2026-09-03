@@ -101,15 +101,17 @@ export function handleWebfigRequest({ request, response, config, store, audit })
         actorEmail: activated.session.actorEmail,
         host: activated.session.host,
       });
+      audit("webfig.cookie_issued", {
+        sessionId: activated.session.sessionId,
+        cookieName: WEBFIG_COOKIE,
+        maxAgeSeconds: Math.floor(config.webfigSessionTtlMs / 1000),
+      });
       response.writeHead(302, {
         location: "/",
         "set-cookie": sessionCookie(
           activated.sessionToken,
           Math.floor(config.webfigSessionTtlMs / 1000),
         ),
-        // Different RouterOS releases publish assets under the same paths.
-        // Clear cached WebFig state when switching devices on this shared host.
-        "clear-site-data": '"cache", "storage"',
         "cache-control": "no-store",
       });
       response.end();
@@ -143,6 +145,11 @@ export function handleWebfigRequest({ request, response, config, store, audit })
   }
 
   if (!session) {
+    if (url.pathname === "/") {
+      audit("webfig.session_missing", {
+        hasSessionCookie: Boolean(token),
+      });
+    }
     writeHtml(response, 401, "Sessão WebFig encerrada", "Volte ao C3 Protect para iniciar um novo acesso.");
     return;
   }
@@ -156,6 +163,15 @@ export function handleWebfigRequest({ request, response, config, store, audit })
     headers: upstreamHeaders(request, session, webfigHost),
     timeout: config.webfigUpstreamTimeoutMs,
   }, (proxyResponse) => {
+    if ((proxyResponse.statusCode ?? 500) >= 400) {
+      audit("webfig.upstream_rejected", {
+        sessionId: session.sessionId,
+        deviceId: session.deviceId,
+        method: request.method,
+        path: url.pathname,
+        statusCode: proxyResponse.statusCode ?? 500,
+      });
+    }
     const headers = { ...proxyResponse.headers };
     headers["cache-control"] = "no-store, no-cache, must-revalidate, private";
     headers.pragma = "no-cache";
