@@ -22,11 +22,11 @@ function withoutGatewayCookie(value = "") {
 }
 
 function sessionCookie(token, maxAgeSeconds) {
-  return `${WEBFIG_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=${maxAgeSeconds}; HttpOnly; Secure; SameSite=Strict`;
+  return `${WEBFIG_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=${maxAgeSeconds}; HttpOnly; Secure; SameSite=Lax`;
 }
 
 function clearSessionCookie() {
-  return `${WEBFIG_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict`;
+  return `${WEBFIG_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`;
 }
 
 function writeHtml(response, status, title, message) {

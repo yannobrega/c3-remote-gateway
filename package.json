@@ -1,6 +1,6 @@
 {
   "name": "c3-remote-gateway",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "private": true,
   "description": "Gateway WebSocket para acesso SSH seguro aos MikroTik do C3 Protect Remote",
   "type": "module",
